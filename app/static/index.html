@@ -685,7 +685,7 @@
 
   function fmtLatency(v) {
     if (v == null) return '—';
-    return v >= 1000 ? (v / 1000).toFixed(2) + ' s' : v.toFixed(1);
+    return v >= 100 ? Math.round(v) : v.toFixed(1);
   }
 
   function esc(s) {
