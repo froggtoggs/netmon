@@ -66,6 +66,14 @@ async def create_host(body: HostIn):
     return {"id": host_id}
 
 
+@app.put("/api/hosts/{host_id}")
+async def update_host(host_id: int, body: HostIn):
+    await db.update_host(host_id, body.name, body.host.strip(), body.type)
+    if scheduler:
+        asyncio.create_task(scheduler.check_host_by_id(host_id))
+    return {"ok": True}
+
+
 @app.delete("/api/hosts/{host_id}")
 async def remove_host(host_id: int):
     await db.delete_host(host_id)

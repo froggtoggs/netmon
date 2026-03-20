@@ -63,6 +63,13 @@ class Database:
             await self._db.commit()
             return cur.lastrowid
 
+    async def update_host(self, host_id: int, name: str, host: str, type_: str):
+        await self._db.execute(
+            "UPDATE hosts SET name = ?, host = ?, type = ? WHERE id = ?",
+            (name, host, type_, host_id),
+        )
+        await self._db.commit()
+
     async def delete_host(self, host_id: int):
         await self._db.execute("DELETE FROM checks WHERE host_id = ?", (host_id,))
         await self._db.execute("DELETE FROM hosts WHERE id = ?", (host_id,))

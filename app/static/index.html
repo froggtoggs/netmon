@@ -157,17 +157,18 @@
     .card-name  { font-weight: 700; font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .card-addr  { font-size: 0.75rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
 
-    .delete-btn {
+    .card-actions { display: flex; gap: 0.1rem; flex-shrink: 0; }
+    .edit-btn, .delete-btn {
       background: none;
       border: none;
       color: var(--muted);
       cursor: pointer;
-      font-size: 1.1rem;
+      font-size: 1rem;
       line-height: 1;
-      padding: 0 2px;
-      flex-shrink: 0;
+      padding: 0 3px;
       transition: color 0.15s;
     }
+    .edit-btn:hover   { color: #60a5fa; }
     .delete-btn:hover { color: var(--down); }
 
     .card-meta {
@@ -215,11 +216,15 @@
     .stats-row {
       padding: 0 0.9rem 0.7rem;
       display: flex;
-      gap: 1rem;
-      font-size: 0.72rem;
-      color: var(--muted);
+      gap: 1.2rem;
     }
-    .stat-item strong { color: var(--text); font-weight: 600; }
+    .stat-item {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .stat-label { font-size: 0.68rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+    .stat-value { font-size: 0.82rem; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
 
     /* ── Uptime dots ── */
     .uptime-row {
@@ -360,11 +365,12 @@
   </div>
 </main>
 
-<!-- Add Host Modal -->
+<!-- Add / Edit Host Modal -->
 <div class="overlay" id="overlay">
   <div class="modal">
-    <h2>Add Host</h2>
+    <h2 id="modal-title">Add Host</h2>
     <form id="add-form">
+      <input type="hidden" id="f-edit-id">
       <div class="form-group">
         <label>Display Name</label>
         <input id="f-name" type="text" placeholder="Production DB" required>
@@ -382,7 +388,7 @@
       </div>
       <div class="form-actions">
         <button type="button" class="btn btn-ghost" id="btn-cancel">Cancel</button>
-        <button type="submit" class="btn btn-primary">Add Host</button>
+        <button type="submit" class="btn btn-primary" id="modal-submit">Add Host</button>
       </div>
     </form>
   </div>
@@ -462,7 +468,15 @@
           <div class="card-name" title="${esc(host.name)}">${esc(host.name)}</div>
           <div class="card-addr" title="${esc(host.host)}">${esc(host.host)}</div>
         </div>
-        <button class="delete-btn" onclick="deleteHost(${host.id})" title="Remove host">×</button>
+        <div class="card-actions">
+          <button class="edit-btn" title="Edit host"
+            data-id="${host.id}"
+            data-name="${esc(host.name)}"
+            data-host="${esc(host.host)}"
+            data-type="${esc(host.type)}"
+            onclick="openEditModal(this)">✎</button>
+          <button class="delete-btn" onclick="deleteHost(${host.id})" title="Remove host">×</button>
+        </div>
       </div>
       <div class="card-meta">
         <span class="type-badge ${host.type}">${host.type.toUpperCase()}</span>
@@ -471,10 +485,10 @@
       </div>
       <div class="latency-block">${latency}</div>
       <div class="stats-row">
-        <span class="stat-item">avg <strong>${avg}</strong></span>
-        <span class="stat-item">min <strong>${min}</strong></span>
-        <span class="stat-item">max <strong>${max}</strong></span>
-        <span class="stat-item" style="margin-left:auto">uptime <strong>${host.uptime_pct}%</strong></span>
+        <div class="stat-item"><span class="stat-label">avg</span><span class="stat-value">${avg}</span></div>
+        <div class="stat-item"><span class="stat-label">min</span><span class="stat-value">${min}</span></div>
+        <div class="stat-item"><span class="stat-label">max</span><span class="stat-value">${max}</span></div>
+        <div class="stat-item" style="margin-left:auto"><span class="stat-label">uptime</span><span class="stat-value">${host.uptime_pct}%</span></div>
       </div>
       <div class="uptime-row">
         <div class="dots">${dots}</div>
@@ -588,27 +602,43 @@
 
   document.getElementById('add-form').addEventListener('submit', async e => {
     e.preventDefault();
-    const name = document.getElementById('f-name').value.trim();
-    const host = document.getElementById('f-host').value.trim();
-    const type = document.getElementById('f-type').value;
+    const name   = document.getElementById('f-name').value.trim();
+    const host   = document.getElementById('f-host').value.trim();
+    const type   = document.getElementById('f-type').value;
+    const editId = document.getElementById('f-edit-id').value;
     if (!name || !host) return;
 
-    const result = await apiFetch('/api/hosts', {
-      method: 'POST',
+    const isEdit = !!editId;
+    const result = await apiFetch(isEdit ? `/api/hosts/${editId}` : '/api/hosts', {
+      method: isEdit ? 'PUT' : 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, host, type }),
     });
 
     if (result) {
       closeModal();
-      showToast(`Added "${name}" — first check in progress…`);
-      setTimeout(fetchData, 2000);
+      showToast(isEdit ? `Updated "${name}"` : `Added "${name}" — first check in progress…`);
+      setTimeout(fetchData, isEdit ? 500 : 2000);
     }
   });
 
   // ── Modal ────────────────────────────────────────────────────────
 
   function openModal() {
+    document.getElementById('modal-title').textContent = 'Add Host';
+    document.getElementById('modal-submit').textContent = 'Add Host';
+    document.getElementById('f-edit-id').value = '';
+    document.getElementById('overlay').classList.add('open');
+    document.getElementById('f-name').focus();
+  }
+
+  function openEditModal(btn) {
+    document.getElementById('modal-title').textContent = 'Edit Host';
+    document.getElementById('modal-submit').textContent = 'Save Changes';
+    document.getElementById('f-edit-id').value = btn.dataset.id;
+    document.getElementById('f-name').value = btn.dataset.name;
+    document.getElementById('f-host').value = btn.dataset.host;
+    document.getElementById('f-type').value = btn.dataset.type;
     document.getElementById('overlay').classList.add('open');
     document.getElementById('f-name').focus();
   }
