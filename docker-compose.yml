@@ -1,0 +1,16 @@
+services:
+  netmon:
+    build: ./app
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config:/config:ro
+      - netmon_data:/data
+    cap_add:
+      - NET_RAW
+    environment:
+      - CHECK_INTERVAL=30
+    restart: unless-stopped
+
+volumes:
+  netmon_data:

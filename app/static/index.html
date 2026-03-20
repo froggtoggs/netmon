@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NetMon</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0f172a;
+      --surface:   #1e293b;
+      --border:    #334155;
+      --text:      #e2e8f0;
+      --muted:     #94a3b8;
+      --up:        #22c55e;
+      --down:      #ef4444;
+      --timeout:   #f59e0b;
+      --unknown:   #64748b;
+      --ping-bg:   #1e1b4b;
+      --ping-fg:   #a78bfa;
+      --http-bg:   #0c1a2e;
+      --http-fg:   #60a5fa;
+      --radius:    10px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      padding: 0.9rem 1.5rem;
+      background: #0b1222;
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .logo {
+      font-size: 1.1rem;
+      font-weight: 700;
+      letter-spacing: 0.15em;
+      color: var(--text);
+      white-space: nowrap;
+    }
+    .logo span { color: #38bdf8; }
+
+    .summary {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.2rem 0.65rem;
+      border-radius: 99px;
+      font-size: 0.78rem;
+      font-weight: 600;
+    }
+    .badge-up      { background: rgba(34,197,94,0.15);  color: var(--up); }
+    .badge-down    { background: rgba(239,68,68,0.15);  color: var(--down); }
+    .badge-timeout { background: rgba(245,158,11,0.15); color: var(--timeout); }
+
+    .badge::before {
+      content: '';
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .header-right {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    #refresh-info {
+      font-size: 0.75rem;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .btn {
+      padding: 0.45rem 1rem;
+      border-radius: var(--radius);
+      border: none;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 600;
+      transition: opacity 0.15s;
+    }
+    .btn:hover { opacity: 0.85; }
+    .btn-primary { background: #3b82f6; color: #fff; }
+
+    /* ── Grid ── */
+    main {
+      padding: 1.5rem;
+    }
+
+    #grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 1rem;
+    }
+
+    /* ── Card ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      transition: border-color 0.3s;
+    }
+    .card.status-up      { border-top: 3px solid var(--up); }
+    .card.status-down    { border-top: 3px solid var(--down); }
+    .card.status-timeout { border-top: 3px solid var(--timeout); }
+    .card.status-unknown { border-top: 3px solid var(--unknown); }
+
+    .card-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.6rem;
+      padding: 0.9rem 0.9rem 0.5rem;
+    }
+
+    .status-dot {
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      margin-top: 3px;
+    }
+    .status-dot.up      { background: var(--up);      box-shadow: 0 0 6px var(--up); }
+    .status-dot.down    { background: var(--down);    box-shadow: 0 0 6px var(--down); animation: pulse-down 1.5s infinite; }
+    .status-dot.timeout { background: var(--timeout); box-shadow: 0 0 6px var(--timeout); }
+    .status-dot.unknown { background: var(--unknown); }
+
+    @keyframes pulse-down {
+      0%,100% { opacity: 1; }
+      50%      { opacity: 0.3; }
+    }
+
+    .card-title { flex: 1; min-width: 0; }
+    .card-name  { font-weight: 700; font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .card-addr  { font-size: 0.75rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+
+    .delete-btn {
+      background: none;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 1.1rem;
+      line-height: 1;
+      padding: 0 2px;
+      flex-shrink: 0;
+      transition: color 0.15s;
+    }
+    .delete-btn:hover { color: var(--down); }
+
+    .card-meta {
+      padding: 0 0.9rem 0.6rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .type-badge {
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      padding: 0.15rem 0.45rem;
+      border-radius: 4px;
+    }
+    .type-badge.ping { background: var(--ping-bg); color: var(--ping-fg); }
+    .type-badge.http { background: var(--http-bg); color: var(--http-fg); }
+
+    .status-text {
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+    }
+    .status-text.up      { color: var(--up); }
+    .status-text.down    { color: var(--down); }
+    .status-text.timeout { color: var(--timeout); }
+    .status-text.unknown { color: var(--unknown); }
+
+    /* ── Latency ── */
+    .latency-block {
+      padding: 0.2rem 0.9rem 0.6rem;
+      display: flex;
+      align-items: baseline;
+      gap: 0.3rem;
+    }
+    .latency-value {
+      font-size: 2rem;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+    }
+    .latency-unit { font-size: 0.8rem; color: var(--muted); }
+
+    .stats-row {
+      padding: 0 0.9rem 0.7rem;
+      display: flex;
+      gap: 1rem;
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+    .stat-item strong { color: var(--text); font-weight: 600; }
+
+    /* ── Uptime dots ── */
+    .uptime-row {
+      padding: 0 0.9rem 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .uptime-pct {
+      font-size: 0.72rem;
+      color: var(--muted);
+      white-space: nowrap;
+      min-width: 40px;
+    }
+    .dots {
+      display: flex;
+      gap: 2px;
+      flex-wrap: nowrap;
+      overflow: hidden;
+    }
+    .dot {
+      width: 6px;
+      height: 14px;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+
+    /* ── Sparkline ── */
+    .sparkline {
+      padding: 0 0.9rem 0.9rem;
+      height: 50px;
+    }
+    .sparkline svg { display: block; }
+
+    /* ── Empty state ── */
+    #empty {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 5rem 2rem;
+      color: var(--muted);
+      gap: 1rem;
+    }
+    #empty.visible { display: flex; }
+    #empty h2 { color: var(--text); font-size: 1.2rem; }
+    #empty p  { font-size: 0.85rem; max-width: 320px; }
+
+    /* ── Modal ── */
+    .overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+    }
+    .overlay.open { display: flex; }
+
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+      width: 100%;
+      max-width: 400px;
+      margin: 1rem;
+    }
+    .modal h2 { font-size: 1rem; margin-bottom: 1.2rem; }
+
+    .form-group { margin-bottom: 0.9rem; }
+    .form-group label { display: block; font-size: 0.78rem; color: var(--muted); margin-bottom: 0.3rem; }
+    .form-group input,
+    .form-group select {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      padding: 0.5rem 0.75rem;
+      font-size: 0.9rem;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .form-group input:focus,
+    .form-group select:focus { border-color: #3b82f6; }
+
+    .form-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.6rem;
+      margin-top: 1.2rem;
+    }
+    .btn-ghost {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+
+    /* ── Toast ── */
+    #toast {
+      position: fixed;
+      bottom: 1.5rem;
+      right: 1.5rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.7rem 1rem;
+      font-size: 0.82rem;
+      max-width: 280px;
+      z-index: 300;
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 0.2s, transform 0.2s;
+    }
+    #toast.show { opacity: 1; transform: translateY(0); }
+    #toast.error { border-color: var(--down); color: var(--down); }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo"><span>◈</span> NETMON</div>
+  <div class="summary" id="summary"></div>
+  <div class="header-right">
+    <span id="refresh-info"></span>
+    <button class="btn btn-primary" id="btn-add">+ Add Host</button>
+  </div>
+</header>
+
+<main>
+  <div id="grid"></div>
+  <div id="empty">
+    <h2>No hosts monitored</h2>
+    <p>Click <strong>+ Add Host</strong> to start tracking a server, device, or URL.</p>
+  </div>
+</main>
+
+<!-- Add Host Modal -->
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <h2>Add Host</h2>
+    <form id="add-form">
+      <div class="form-group">
+        <label>Display Name</label>
+        <input id="f-name" type="text" placeholder="Production DB" required>
+      </div>
+      <div class="form-group">
+        <label>Host / IP / URL</label>
+        <input id="f-host" type="text" placeholder="192.168.1.50 or https://api.example.com" required>
+      </div>
+      <div class="form-group">
+        <label>Check Type</label>
+        <select id="f-type">
+          <option value="ping">Ping (ICMP)</option>
+          <option value="http">HTTP / HTTPS</option>
+        </select>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" id="btn-cancel">Cancel</button>
+        <button type="submit" class="btn btn-primary">Add Host</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+  const REFRESH_INTERVAL = 30; // seconds
+
+  let countdown = REFRESH_INTERVAL;
+  let refreshTimer;
+  let countdownTimer;
+
+  // ── Fetch & Render ──────────────────────────────────────────────
+
+  async function fetchData() {
+    const hosts = await apiFetch('/api/hosts');
+    if (!hosts) return;
+
+    // Fetch all histories in parallel
+    const histories = await Promise.all(
+      hosts.map(h => apiFetch(`/api/hosts/${h.id}/history?limit=60`)
+                       .then(r => r || []))
+    );
+
+    render(hosts, histories);
+  }
+
+  function render(hosts, histories) {
+    const grid = document.getElementById('grid');
+    const empty = document.getElementById('empty');
+
+    if (hosts.length === 0) {
+      grid.innerHTML = '';
+      empty.classList.add('visible');
+      updateSummary([]);
+      return;
+    }
+
+    empty.classList.remove('visible');
+    updateSummary(hosts);
+
+    // Preserve scroll position
+    const scrollY = window.scrollY;
+
+    grid.innerHTML = hosts.map((h, i) => cardHtml(h, histories[i] || [])).join('');
+
+    // Draw sparklines after DOM is updated
+    hosts.forEach((h, i) => {
+      const el = document.getElementById(`spark-${h.id}`);
+      if (el) drawSparkline(el, histories[i] || [], statusColor(h.last_status));
+    });
+
+    window.scrollTo(0, scrollY);
+  }
+
+  function cardHtml(host, history) {
+    const st = host.last_status || 'unknown';
+    const color = statusColor(st);
+    const latency = host.last_latency != null
+      ? `<span class="latency-value" style="color:${color}">${fmtLatency(host.last_latency)}</span><span class="latency-unit">ms</span>`
+      : `<span class="latency-value" style="color:var(--unknown)">—</span>`;
+
+    const avg = fmtMs(host.avg_latency);
+    const min = fmtMs(host.min_latency);
+    const max = fmtMs(host.max_latency);
+
+    const dots = buildDots(history);
+    const lastCheck = host.last_check ? timeAgo(host.last_check) : 'never';
+
+    return `
+    <div class="card status-${st}">
+      <div class="card-header">
+        <div class="status-dot ${st}"></div>
+        <div class="card-title">
+          <div class="card-name" title="${esc(host.name)}">${esc(host.name)}</div>
+          <div class="card-addr" title="${esc(host.host)}">${esc(host.host)}</div>
+        </div>
+        <button class="delete-btn" onclick="deleteHost(${host.id})" title="Remove host">×</button>
+      </div>
+      <div class="card-meta">
+        <span class="type-badge ${host.type}">${host.type.toUpperCase()}</span>
+        <span class="status-text ${st}">${stLabel(st)}</span>
+        <span style="margin-left:auto;font-size:0.68rem;color:var(--muted)">${lastCheck}</span>
+      </div>
+      <div class="latency-block">${latency}</div>
+      <div class="stats-row">
+        <span class="stat-item">avg <strong>${avg}</strong></span>
+        <span class="stat-item">min <strong>${min}</strong></span>
+        <span class="stat-item">max <strong>${max}</strong></span>
+        <span class="stat-item" style="margin-left:auto">uptime <strong>${host.uptime_pct}%</strong></span>
+      </div>
+      <div class="uptime-row">
+        <div class="dots">${dots}</div>
+      </div>
+      <div class="sparkline" id="spark-${host.id}"></div>
+    </div>`;
+  }
+
+  function buildDots(history) {
+    if (!history.length) return '<span style="color:var(--muted);font-size:0.7rem">no data</span>';
+    return history.slice(-40).map(h => {
+      const c = statusColor(h.status);
+      const tip = `${h.status}${h.latency_ms != null ? ' ' + h.latency_ms.toFixed(1) + 'ms' : ''}`;
+      return `<div class="dot" style="background:${c};opacity:0.85" title="${tip}"></div>`;
+    }).join('');
+  }
+
+  function drawSparkline(container, history, color) {
+    const W = 200, H = 44;
+    const pts = history.filter(d => d.status === 'up' && d.latency_ms != null);
+    if (pts.length < 2) {
+      container.innerHTML = `<svg width="100%" height="${H}"></svg>`;
+      return;
+    }
+
+    const vals = pts.map(d => d.latency_ms);
+    const max = Math.max(...vals);
+    const min = Math.min(...vals);
+    const range = max - min || 1;
+
+    const toX = i => (i / (pts.length - 1)) * W;
+    const toY = v => H - 4 - ((v - min) / range) * (H - 8);
+
+    const coords = vals.map((v, i) => [toX(i), toY(v)]);
+    const line = coords.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join('');
+    const area = `${line}L${W},${H}L0,${H}Z`;
+    const gid = `g${host_id_from(container)}`;
+
+    container.innerHTML = `
+      <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" width="100%" height="${H}">
+        <defs>
+          <linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="${color}" stop-opacity="0.25"/>
+            <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <path d="${area}" fill="url(#${gid})"/>
+        <path d="${line}" fill="none" stroke="${color}" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+      </svg>`;
+  }
+
+  function host_id_from(el) {
+    return (el.id || '').replace('spark-', '') || Math.random().toString(36).slice(2);
+  }
+
+  // ── Summary bar ─────────────────────────────────────────────────
+
+  function updateSummary(hosts) {
+    const up      = hosts.filter(h => h.last_status === 'up').length;
+    const down    = hosts.filter(h => h.last_status === 'down' || h.last_status === 'error').length;
+    const timeout = hosts.filter(h => h.last_status === 'timeout').length;
+    const unknown = hosts.filter(h => !h.last_status).length;
+
+    let html = '';
+    if (up)      html += `<span class="badge badge-up">${up} up</span>`;
+    if (down)    html += `<span class="badge badge-down">${down} down</span>`;
+    if (timeout) html += `<span class="badge badge-timeout">${timeout} timeout</span>`;
+    if (unknown) html += `<span class="badge" style="background:rgba(100,116,139,0.15);color:var(--unknown)">${unknown} pending</span>`;
+    document.getElementById('summary').innerHTML = html;
+  }
+
+  // ── Auto-refresh ─────────────────────────────────────────────────
+
+  function startRefresh() {
+    clearInterval(refreshTimer);
+    clearInterval(countdownTimer);
+    countdown = REFRESH_INTERVAL;
+
+    refreshTimer = setInterval(() => {
+      countdown = REFRESH_INTERVAL;
+      fetchData();
+    }, REFRESH_INTERVAL * 1000);
+
+    countdownTimer = setInterval(() => {
+      countdown--;
+      document.getElementById('refresh-info').textContent =
+        `Refresh in ${countdown}s`;
+    }, 1000);
+  }
+
+  // ── API helpers ──────────────────────────────────────────────────
+
+  async function apiFetch(url, opts) {
+    try {
+      const res = await fetch(url, opts);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return await res.json();
+    } catch (e) {
+      showToast('Request failed: ' + e.message, true);
+      return null;
+    }
+  }
+
+  // ── Actions ──────────────────────────────────────────────────────
+
+  async function deleteHost(id) {
+    if (!confirm('Remove this host from monitoring?')) return;
+    const result = await apiFetch(`/api/hosts/${id}`, { method: 'DELETE' });
+    if (result) fetchData();
+  }
+
+  document.getElementById('add-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const name = document.getElementById('f-name').value.trim();
+    const host = document.getElementById('f-host').value.trim();
+    const type = document.getElementById('f-type').value;
+    if (!name || !host) return;
+
+    const result = await apiFetch('/api/hosts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, host, type }),
+    });
+
+    if (result) {
+      closeModal();
+      showToast(`Added "${name}" — first check in progress…`);
+      setTimeout(fetchData, 2000);
+    }
+  });
+
+  // ── Modal ────────────────────────────────────────────────────────
+
+  function openModal() {
+    document.getElementById('overlay').classList.add('open');
+    document.getElementById('f-name').focus();
+  }
+
+  function closeModal() {
+    document.getElementById('overlay').classList.remove('open');
+    document.getElementById('add-form').reset();
+  }
+
+  document.getElementById('btn-add').addEventListener('click', openModal);
+  document.getElementById('btn-cancel').addEventListener('click', closeModal);
+  document.getElementById('overlay').addEventListener('click', e => {
+    if (e.target === document.getElementById('overlay')) closeModal();
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeModal();
+  });
+
+  // ── Toast ────────────────────────────────────────────────────────
+
+  let toastTimer;
+  function showToast(msg, error = false) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className = 'show' + (error ? ' error' : '');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.className = '', 3500);
+  }
+
+  // ── Utilities ────────────────────────────────────────────────────
+
+  function statusColor(st) {
+    return st === 'up' ? 'var(--up)' :
+           st === 'timeout' ? 'var(--timeout)' :
+           st === 'down' || st === 'error' ? 'var(--down)' :
+           'var(--unknown)';
+  }
+
+  function stLabel(st) {
+    return { up:'UP', down:'DOWN', timeout:'TIMEOUT', error:'ERROR', unknown:'PENDING' }[st] || st.toUpperCase();
+  }
+
+  function fmtMs(v) { return v != null ? v.toFixed(1) + ' ms' : '—'; }
+
+  function fmtLatency(v) {
+    if (v == null) return '—';
+    return v >= 1000 ? (v / 1000).toFixed(2) + ' s' : v.toFixed(1);
+  }
+
+  function esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function timeAgo(ts) {
+    const diff = Math.floor((Date.now() - new Date(ts + 'Z').getTime()) / 1000);
+    if (isNaN(diff) || diff < 0) return 'just now';
+    if (diff < 5)   return 'just now';
+    if (diff < 60)  return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    return `${Math.floor(diff / 3600)}h ago`;
+  }
+
+  // ── Boot ─────────────────────────────────────────────────────────
+
+  fetchData();
+  startRefresh();
+</script>
+</body>
+</html>
