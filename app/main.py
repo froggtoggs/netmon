@@ -41,8 +41,9 @@ async def _load_config():
         host = entry.get("host", "").strip()
         name = entry.get("name", host)
         type_ = entry.get("type", "ping")
+        group = entry.get("group", "")
         if host and not await db.host_exists(host):
-            await db.add_host(name, host, type_)
+            await db.add_host(name, host, type_, group)
 
 
 # ── API ──────────────────────────────────────────────────────────────────────
@@ -51,6 +52,13 @@ class HostIn(BaseModel):
     name: str
     host: str
     type: str = "ping"
+    group: str = ""
+
+
+class ReorderItem(BaseModel):
+    id: int
+    group: str = ""
+    sort_order: int
 
 
 @app.get("/api/hosts")
@@ -60,7 +68,7 @@ async def list_hosts():
 
 @app.post("/api/hosts", status_code=201)
 async def create_host(body: HostIn):
-    host_id = await db.add_host(body.name, body.host.strip(), body.type)
+    host_id = await db.add_host(body.name, body.host.strip(), body.type, body.group)
     if scheduler:
         asyncio.create_task(scheduler.check_host_by_id(host_id))
     return {"id": host_id}
@@ -68,9 +76,15 @@ async def create_host(body: HostIn):
 
 @app.put("/api/hosts/{host_id}")
 async def update_host(host_id: int, body: HostIn):
-    await db.update_host(host_id, body.name, body.host.strip(), body.type)
+    await db.update_host(host_id, body.name, body.host.strip(), body.type, body.group)
     if scheduler:
         asyncio.create_task(scheduler.check_host_by_id(host_id))
+    return {"ok": True}
+
+
+@app.patch("/api/hosts/reorder")
+async def reorder_hosts(body: list[ReorderItem]):
+    await db.reorder_hosts([item.model_dump() for item in body])
     return {"ok": True}
 
 

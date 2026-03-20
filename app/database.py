@@ -36,6 +36,16 @@ class Database:
         self._db.row_factory = aiosqlite.Row
         await self._db.executescript(SCHEMA)
         await self._db.commit()
+        # Migrations for columns added after initial release
+        for col, definition in [
+            ("sort_order", "INTEGER NOT NULL DEFAULT 0"),
+            ("group_name", "TEXT NOT NULL DEFAULT ''"),
+        ]:
+            try:
+                await self._db.execute(f"ALTER TABLE hosts ADD COLUMN {col} {definition}")
+                await self._db.commit()
+            except Exception:
+                pass  # column already exists
 
     async def close(self):
         if self._db:
@@ -55,19 +65,33 @@ class Database:
         ) as cur:
             return await cur.fetchone() is not None
 
-    async def add_host(self, name: str, host: str, type_: str) -> int:
+    async def _next_sort_order(self) -> int:
+        async with self._db.execute("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM hosts") as cur:
+            row = await cur.fetchone()
+            return row[0]
+
+    async def add_host(self, name: str, host: str, type_: str, group: str = "") -> int:
+        sort_order = await self._next_sort_order()
         async with self._db.execute(
-            "INSERT INTO hosts (name, host, type) VALUES (?, ?, ?)",
-            (name, host, type_),
+            "INSERT INTO hosts (name, host, type, group_name, sort_order) VALUES (?, ?, ?, ?, ?)",
+            (name, host, type_, group, sort_order),
         ) as cur:
             await self._db.commit()
             return cur.lastrowid
 
-    async def update_host(self, host_id: int, name: str, host: str, type_: str):
+    async def update_host(self, host_id: int, name: str, host: str, type_: str, group: str = ""):
         await self._db.execute(
-            "UPDATE hosts SET name = ?, host = ?, type = ? WHERE id = ?",
-            (name, host, type_, host_id),
+            "UPDATE hosts SET name = ?, host = ?, type = ?, group_name = ? WHERE id = ?",
+            (name, host, type_, group, host_id),
         )
+        await self._db.commit()
+
+    async def reorder_hosts(self, items: list[dict]):
+        for item in items:
+            await self._db.execute(
+                "UPDATE hosts SET sort_order = ?, group_name = ? WHERE id = ?",
+                (item["sort_order"], item["group"], item["id"]),
+            )
         await self._db.commit()
 
     async def delete_host(self, host_id: int):
@@ -92,7 +116,7 @@ class Database:
     async def get_hosts_with_status(self) -> list[dict]:
         query = """
             SELECT
-                h.id, h.name, h.host, h.type,
+                h.id, h.name, h.host, h.type, h.group_name, h.sort_order,
                 c.status      AS last_status,
                 c.latency_ms  AS last_latency,
                 c.timestamp   AS last_check,
@@ -125,7 +149,7 @@ class Database:
                 SELECT id FROM checks WHERE host_id = h.id ORDER BY timestamp DESC LIMIT 1
             )
             WHERE h.enabled = 1
-            ORDER BY h.name
+            ORDER BY h.sort_order, h.name
         """
         async with self._db.execute(query) as cur:
             rows = await cur.fetchall()

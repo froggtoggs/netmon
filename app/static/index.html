@@ -109,10 +109,46 @@
       padding: 1.5rem;
     }
 
-    #grid {
+    #grid { /* groups stack vertically */ }
+
+    .group-section {
+      margin-bottom: 2rem;
+    }
+
+    .group-header {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0 0.2rem 0.5rem;
+      margin-bottom: 0.75rem;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      cursor: default;
+    }
+
+    .group-count {
+      background: var(--border);
+      color: var(--muted);
+      border-radius: 99px;
+      padding: 0.05rem 0.45rem;
+      font-size: 0.68rem;
+    }
+
+    .card-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
       gap: 1rem;
+      min-height: 4px; /* keep drop zone alive when empty */
+    }
+
+    .card-grid.drag-over {
+      outline: 2px dashed var(--border);
+      outline-offset: 4px;
+      border-radius: var(--radius);
     }
 
     /* ── Card ── */
@@ -156,6 +192,23 @@
     .card-title { flex: 1; min-width: 0; }
     .card-name  { font-weight: 700; font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .card-addr  { font-size: 0.75rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+
+    .drag-handle {
+      color: var(--border);
+      cursor: grab;
+      font-size: 1rem;
+      line-height: 1;
+      padding: 0 3px;
+      flex-shrink: 0;
+      margin-top: 1px;
+      user-select: none;
+      transition: color 0.15s;
+    }
+    .drag-handle:hover  { color: var(--muted); }
+    .drag-handle:active { cursor: grabbing; }
+
+    .card.dragging   { opacity: 0.35; }
+    .card.drag-over  { outline: 2px solid #3b82f6; outline-offset: 2px; border-radius: var(--radius); }
 
     .card-actions { display: flex; gap: 0.1rem; flex-shrink: 0; }
     .edit-btn, .delete-btn {
@@ -386,6 +439,11 @@
           <option value="http">HTTP / HTTPS</option>
         </select>
       </div>
+      <div class="form-group">
+        <label>Group <span style="color:var(--muted);font-weight:400">(optional)</span></label>
+        <input id="f-group" type="text" placeholder="e.g. Internal, External…" list="group-datalist" autocomplete="off">
+        <datalist id="group-datalist"></datalist>
+      </div>
       <div class="form-actions">
         <button type="button" class="btn btn-ghost" id="btn-cancel">Cancel</button>
         <button type="submit" class="btn btn-primary" id="modal-submit">Add Host</button>
@@ -419,6 +477,8 @@
   }
 
   function render(hosts, histories) {
+    if (isDragging) return; // don't clobber an in-progress drag
+
     const grid = document.getElementById('grid');
     const empty = document.getElementById('empty');
 
@@ -432,17 +492,47 @@
     empty.classList.remove('visible');
     updateSummary(hosts);
 
-    // Preserve scroll position
     const scrollY = window.scrollY;
+    const historyById = Object.fromEntries(hosts.map((h, i) => [h.id, histories[i] || []]));
 
-    grid.innerHTML = hosts.map((h, i) => cardHtml(h, histories[i] || [])).join('');
+    // Group hosts preserving sort_order (already sorted by API)
+    const groups = new Map();
+    for (const host of hosts) {
+      const g = host.group_name || '';
+      if (!groups.has(g)) groups.set(g, []);
+      groups.get(g).push(host);
+    }
 
-    // Draw sparklines after DOM is updated
-    hosts.forEach((h, i) => {
-      const el = document.getElementById(`spark-${h.id}`);
-      if (el) drawSparkline(el, histories[i] || [], statusColor(h.last_status));
+    // Named groups alphabetically, ungrouped last
+    const sortedKeys = [...groups.keys()].sort((a, b) => {
+      if (!a && b) return 1;
+      if (a && !b) return -1;
+      return a.localeCompare(b);
     });
 
+    const hasNamedGroups = sortedKeys.some(k => k !== '');
+
+    grid.innerHTML = sortedKeys.map(gName => {
+      const groupHosts = groups.get(gName);
+      const headerHtml = hasNamedGroups
+        ? `<div class="group-header">
+             <span>${gName ? esc(gName) : 'Ungrouped'}</span>
+             <span class="group-count">${groupHosts.length}</span>
+           </div>`
+        : '';
+      const cardsHtml = groupHosts.map(h => cardHtml(h, historyById[h.id])).join('');
+      return `<div class="group-section" data-group="${esc(gName)}">
+        ${headerHtml}
+        <div class="card-grid">${cardsHtml}</div>
+      </div>`;
+    }).join('');
+
+    hosts.forEach(h => {
+      const el = document.getElementById(`spark-${h.id}`);
+      if (el) drawSparkline(el, historyById[h.id], statusColor(h.last_status));
+    });
+
+    initDragAndDrop();
     window.scrollTo(0, scrollY);
   }
 
@@ -461,8 +551,9 @@
     const lastCheck = host.last_check ? timeAgo(host.last_check) : 'never';
 
     return `
-    <div class="card status-${st}">
+    <div class="card status-${st}" data-id="${host.id}" draggable="true">
       <div class="card-header">
+        <div class="drag-handle" title="Drag to reorder">⠿</div>
         <div class="status-dot ${st}"></div>
         <div class="card-title">
           <div class="card-name" title="${esc(host.name)}">${esc(host.name)}</div>
@@ -474,6 +565,7 @@
             data-name="${esc(host.name)}"
             data-host="${esc(host.host)}"
             data-type="${esc(host.type)}"
+            data-group="${esc(host.group_name || '')}"
             onclick="openEditModal(this)">✎</button>
           <button class="delete-btn" onclick="deleteHost(${host.id})" title="Remove host">×</button>
         </div>
@@ -605,6 +697,7 @@
     const name   = document.getElementById('f-name').value.trim();
     const host   = document.getElementById('f-host').value.trim();
     const type   = document.getElementById('f-type').value;
+    const group  = document.getElementById('f-group').value.trim();
     const editId = document.getElementById('f-edit-id').value;
     if (!name || !host) return;
 
@@ -612,7 +705,7 @@
     const result = await apiFetch(isEdit ? `/api/hosts/${editId}` : '/api/hosts', {
       method: isEdit ? 'PUT' : 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, host, type }),
+      body: JSON.stringify({ name, host, type, group }),
     });
 
     if (result) {
@@ -624,10 +717,20 @@
 
   // ── Modal ────────────────────────────────────────────────────────
 
+  function populateGroupDatalist() {
+    const groups = new Set();
+    document.querySelectorAll('.group-section[data-group]').forEach(s => {
+      if (s.dataset.group) groups.add(s.dataset.group);
+    });
+    document.getElementById('group-datalist').innerHTML =
+      [...groups].map(g => `<option value="${esc(g)}">`).join('');
+  }
+
   function openModal() {
     document.getElementById('modal-title').textContent = 'Add Host';
     document.getElementById('modal-submit').textContent = 'Add Host';
     document.getElementById('f-edit-id').value = '';
+    populateGroupDatalist();
     document.getElementById('overlay').classList.add('open');
     document.getElementById('f-name').focus();
   }
@@ -639,6 +742,8 @@
     document.getElementById('f-name').value = btn.dataset.name;
     document.getElementById('f-host').value = btn.dataset.host;
     document.getElementById('f-type').value = btn.dataset.type;
+    document.getElementById('f-group').value = btn.dataset.group || '';
+    populateGroupDatalist();
     document.getElementById('overlay').classList.add('open');
     document.getElementById('f-name').focus();
   }
@@ -699,6 +804,91 @@
     if (diff < 60)  return `${diff}s ago`;
     if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
     return `${Math.floor(diff / 3600)}h ago`;
+  }
+
+  // ── Drag & Drop ──────────────────────────────────────────────────
+
+  let isDragging = false;
+  let dragSrcId = null;
+  let dragHandleActive = false;
+
+  document.addEventListener('mouseup', () => { dragHandleActive = false; });
+
+  function initDragAndDrop() {
+    document.querySelectorAll('.card').forEach(card => {
+      const handle = card.querySelector('.drag-handle');
+
+      handle.addEventListener('mousedown', () => { dragHandleActive = true; });
+
+      card.addEventListener('dragstart', e => {
+        if (!dragHandleActive) { e.preventDefault(); return; }
+        isDragging = true;
+        dragSrcId = card.dataset.id;
+        e.dataTransfer.effectAllowed = 'move';
+        // Delay class so the drag ghost captures the un-dimmed card
+        setTimeout(() => card.classList.add('dragging'), 0);
+      });
+
+      card.addEventListener('dragend', () => {
+        isDragging = false;
+        dragHandleActive = false;
+        document.querySelectorAll('.card.dragging, .card.drag-over').forEach(el => {
+          el.classList.remove('dragging', 'drag-over');
+        });
+        document.querySelectorAll('.card-grid.drag-over').forEach(el => {
+          el.classList.remove('drag-over');
+        });
+      });
+
+      card.addEventListener('dragover', e => {
+        e.preventDefault();
+        if (card.dataset.id === dragSrcId) return;
+        document.querySelectorAll('.card.drag-over').forEach(c => c.classList.remove('drag-over'));
+        card.classList.add('drag-over');
+      });
+
+      card.addEventListener('drop', e => {
+        e.stopPropagation();
+        e.preventDefault();
+        if (card.dataset.id === dragSrcId) return;
+        const src = document.querySelector(`.card[data-id="${dragSrcId}"]`);
+        card.closest('.card-grid').insertBefore(src, card);
+        saveOrder();
+      });
+    });
+
+    // Allow dropping onto an empty grid or group header area
+    document.querySelectorAll('.card-grid').forEach(grid => {
+      grid.addEventListener('dragover', e => {
+        e.preventDefault();
+        grid.classList.add('drag-over');
+      });
+      grid.addEventListener('dragleave', () => grid.classList.remove('drag-over'));
+      grid.addEventListener('drop', e => {
+        e.preventDefault();
+        grid.classList.remove('drag-over');
+        if (e.target.closest('.card')) return; // handled by card listener
+        const src = document.querySelector(`.card[data-id="${dragSrcId}"]`);
+        grid.appendChild(src);
+        saveOrder();
+      });
+    });
+  }
+
+  function saveOrder() {
+    const items = [];
+    let i = 0;
+    document.querySelectorAll('.group-section').forEach(section => {
+      const group = section.dataset.group || '';
+      section.querySelectorAll('.card').forEach(card => {
+        items.push({ id: parseInt(card.dataset.id), group, sort_order: i++ });
+      });
+    });
+    apiFetch('/api/hosts/reorder', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(items),
+    });
   }
 
   // ── Boot ─────────────────────────────────────────────────────────
